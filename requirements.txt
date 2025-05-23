@@ -1,6 +1,7 @@
 streamlit
 pandas
-opencv-python
-deepface
+opencv-python-headless
+deepface==0.0.75
 altair
-tensorflow
+tensorflow-cpu==2.12.0
+protobuf==3.20.0
