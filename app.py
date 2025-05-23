@@ -1,63 +1,117 @@
 import streamlit as st
 import pandas as pd
 import cv2
-import tempfile
-import os
-from deepface import DeepFace
-import altair as alt
-from datetime import timedelta
+import numpy as np
+from datetime import datetime
+import time
 
-st.set_page_config(page_title="顔表情 感情分析ダッシュボード v4", layout="wide")
-st.title("😶‍🌫️ 顔表情 感情分析ダッシュボード v4")
-st.caption("AIが抽出した感情データをもとに、傾向やインサイトを可視化・要約します。")
+# ページ設定
+st.set_page_config(page_title="感情分析ダッシュボード", layout="wide")
 
-uploaded_video = st.file_uploader("🎥 感情データを含む動画をアップロード", type=["mp4", "mov"])
+# タイトル
+st.title("リアルタイム感情分析ダッシュボード")
+st.markdown("OpenCVを使った顔検出と感情分析のデモです")
 
-if uploaded_video:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
-        tmp_file.write(uploaded_video.read())
-        video_path = tmp_file.name
+# サイドバー
+st.sidebar.header("コントロールパネル")
 
-    cap = cv2.VideoCapture(video_path)
-    frame_rate = 3
-    results = []
+# データ収集のための変数初期化
+if 'emotion_data' not in st.session_state:
+    st.session_state.emotion_data = []
 
-    st.info("🔍 動画から顔を検出して感情を解析中...（3秒ごと）")
+# 感情のモックデータ（実際はDeepFaceが担当する部分）
+emotions = ['happy', 'sad', 'angry', 'neutral', 'surprised', 'fear', 'disgust']
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+# 感情分析関数（モック - 実際はDeepFaceが担当する部分）
+def analyze_emotion(face_img):
+    # ランダムな感情と確率を返す（デモ用）
+    emotion_probs = np.random.dirichlet(np.ones(len(emotions)))
+    emotion_dict = dict(zip(emotions, emotion_probs))
+    dominant_emotion = max(emotion_dict, key=emotion_dict.get)
+    return dominant_emotion, emotion_dict
 
-        if int(cap.get(1)) % (frame_rate * int(cap.get(cv2.CAP_PROP_FPS))) == 0:
-            try:
-                analysis = DeepFace.analyze(frame, actions=['emotion'], enforce_detection=False)[0]
-                timestamp = str(timedelta(seconds=int(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000)))
-                results.append({"time": timestamp, "emotion": analysis['dominant_emotion']})
-            except:
-                continue
+# カメラからのリアルタイム分析
+def realtime_analysis():
+    # OpenCVのカスケード分類器をロード
+    try:
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    except Exception as e:
+        st.error(f"分類器のロードに失敗しました: {e}")
+        return
+    
+    # カメラの設定
+    st.write("### リアルタイム感情分析")
+    run = st.checkbox("カメラをオンにする")
+    
+    if run:
+        FRAME_WINDOW = st.image([])
+        
+        # 分析結果表示用
+        result_placeholder = st.empty()
+        chart_placeholder = st.empty()
+        
+        while run:
+            # デモ用に画像をシミュレート
+            img = np.zeros((300, 400, 3), dtype=np.uint8)
+            img[:] = (200, 200, 200)  # グレー背景
+            
+            # ランダムな位置に顔の円を描画
+            center_x = np.random.randint(100, 300)
+            center_y = np.random.randint(100, 200)
+            cv2.circle(img, (center_x, center_y), 50, (255, 200, 200), -1)  # 顔
+            
+            # 分析
+            dominant_emotion, emotion_dict = analyze_emotion(img)
+            
+            # 時間情報の追加
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            emotion_data = {"time": timestamp}
+            emotion_data.update(emotion_dict)
+            
+            # データ保存
+            st.session_state.emotion_data.append(emotion_data)
+            if len(st.session_state.emotion_data) > 100:  # 最大100ポイント保存
+                st.session_state.emotion_data.pop(0)
+            
+            # 結果の表示
+            FRAME_WINDOW.image(img, channels="BGR")
+            result_placeholder.write(f"検出された主要な感情: **{dominant_emotion}** ({emotion_dict[dominant_emotion]:.2f})")
+            
+            # 感情グラフ
+            df = pd.DataFrame(st.session_state.emotion_data)
+            if len(df) > 0:
+                df = df.set_index('time')
+                chart_placeholder.line_chart(df)
+            
+            time.sleep(1)  # 1秒おきに更新
 
-    cap.release()
-    df = pd.DataFrame(results)
+# 履歴データの表示
+def display_historical_data():
+    st.write("### 感情分析の履歴")
+    
+    if len(st.session_state.emotion_data) > 0:
+        df = pd.DataFrame(st.session_state.emotion_data)
+        st.dataframe(df)
+        
+        # 感情の分布をグラフ化
+        st.write("### 感情の分布")
+        emotion_df = df.drop('time', axis=1)
+        mean_emotions = emotion_df.mean().sort_values(ascending=False)
+        st.bar_chart(mean_emotions)
+    else:
+        st.info("データがありません。リアルタイム分析を実行してデータを収集してください。")
 
-    st.success("✅ 感情抽出が完了しました")
-    st.dataframe(df, use_container_width=True)
-
-    st.markdown("### 📊 感情の出現傾向")
-    chart = alt.Chart(df).mark_bar().encode(
-        x=alt.X('emotion:N', title='感情'),
-        y=alt.Y('count():Q', title='出現数'),
-        color='emotion:N'
-    ).properties(
-        width=600,
-        height=400
+# メインアプリ
+def main():
+    option = st.sidebar.selectbox(
+        "機能を選択してください",
+        ["リアルタイム分析", "履歴データ"]
     )
-    st.altair_chart(chart, use_container_width=True)
+    
+    if option == "リアルタイム分析":
+        realtime_analysis()
+    elif option == "履歴データ":
+        display_historical_data()
 
-    csv = df.to_csv(index=False).encode('utf-8-sig')
-    st.download_button("📥 結果CSVをダウンロード", csv, "emotion_results.csv", "text/csv")
-
-    st.markdown("---")
-    st.subheader("📝 感情要約コメント")
-    summary = df['emotion'].value_counts().idxmax()
-    st.write(f"💡 この動画では **『{summary}』** が最も多く観測されました。コンテンツの印象や空気感の分析に役立ちます。")
+if __name__ == "__main__":
+    main()
